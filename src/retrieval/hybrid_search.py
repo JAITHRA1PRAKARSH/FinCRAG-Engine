@@ -1,5 +1,5 @@
 from rank_bm25 import BM25Okapi
-from sentence_transformers import CrossEncoder
+from fastembed.rerank.cross_encoder import TextCrossEncoder
 from src.ingestion.chunker import load_all_filings
 from src.retrieval.vector_store import build_vector_store
 
@@ -8,7 +8,7 @@ class HybridRetriever:
         print("[*] Initializing Hybrid Retriever...")
         self.chunks = chunks
         
-        # 1. Build Vector Store
+        # 1. Build In-Memory Vector Store
         self.vector_store = build_vector_store(self.chunks)
         
         # 2. Build BM25 Keyword Index
@@ -16,9 +16,9 @@ class HybridRetriever:
         tokenized_corpus = [doc.page_content.lower().split() for doc in self.chunks]
         self.bm25 = BM25Okapi(tokenized_corpus)
         
-        # 3. Load Cross-Encoder Re-Ranker
-        print("[*] Loading Cross-Encoder Re-ranking model (MiniLM)...")
-        self.reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        # 3. Load FastEmbed ONNX Cross-Encoder (Ultra-lightweight, 0 MB PyTorch)
+        print("[*] Loading ONNX Cross-Encoder Re-ranker (MiniLM)...")
+        self.reranker = TextCrossEncoder(model_name="Xenova/ms-marco-MiniLM-L-6-v2")
         
         print("[+] Retriever Engine Fully Armed!")
 
@@ -43,7 +43,7 @@ class HybridRetriever:
         """
         1. Wide Net: Retrieve top 15 from Vector and BM25.
         2. Merge: Reciprocal Rank Fusion (RRF).
-        3. Re-Rank: MiniLM Cross-Encoder.
+        3. Re-Rank: ONNX MiniLM Cross-Encoder.
         """
         print(f"\n[*] Executing Hybrid Search for: '{query}'")
         
@@ -54,10 +54,10 @@ class HybridRetriever:
         # 2. RRF Merge
         fused_docs = self.rrf_merge(vector_docs, bm25_docs, top_n=15)
         
-        # 3. Cross-Encoder Re-Ranking
-        print("[*] Re-Ranking candidates with Cross-Encoder...")
-        pairs = [[query, doc.page_content] for doc in fused_docs]
-        scores = self.reranker.predict(pairs)
+        # 3. FastEmbed ONNX Re-Ranking
+        print("[*] Re-Ranking candidates with ONNX Cross-Encoder...")
+        doc_texts = [d.page_content for d in fused_docs]
+        scores = list(self.reranker.rerank(query, doc_texts))
         
         scored_docs = list(zip(fused_docs, scores))
         scored_docs.sort(key=lambda x: x[1], reverse=True)

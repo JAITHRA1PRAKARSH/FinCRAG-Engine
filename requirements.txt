@@ -6,7 +6,6 @@ langchain-text-splitters
 langchain-qdrant
 qdrant-client
 fastembed
-sentence-transformers
 rank_bm25
 python-dotenv
 pydantic
