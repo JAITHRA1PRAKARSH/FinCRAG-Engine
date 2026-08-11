@@ -117,14 +117,17 @@ def rewrite_query_node(state: AgentState):
     return {"question": new_q, "loop_count": loop_count}
 
 def generate_node(state: AgentState):
-    """Node 4: Generates the final answer using the LLM and retrieved context."""
-    print("[Agent] Action: Generating final answer...")
+    """Node 4: Generates the final answer with strict inline citations."""
+    print("[Agent] Action: Generating final answer with citations...")
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", """You are a strictly accurate SEC Financial Analyst. 
         Answer the user's question using ONLY the provided context. 
-        If the answer is not in the context, say 'I cannot find this information in the filing.'
-        Do not hallucinate numbers.
+        
+        CITATION INSTRUCTIONS:
+        - For every key claim, risk factor, or numerical figure, provide an explicit inline citation indicating which company filing and section it came from (e.g., [Apple 10-K: Item 1A - Risk Factors] or [Microsoft 10-K: Consolidated Statements of Operations]).
+        - If the context does not contain the answer, state: 'I cannot find this information in the filings.'
+        - Do not invent citations or hallucinate numbers.
         
         CONTEXT:
         {context}"""),
@@ -138,7 +141,6 @@ def generate_node(state: AgentState):
     })
     
     return {"answer": response.content}
-
 
 # 4. Build the LangGraph
 print("[*] Compiling CRAG Workflow...")

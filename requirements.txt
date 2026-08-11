@@ -4,7 +4,7 @@ langchain-groq
 langchain-community
 langchain-text-splitters
 langchain-qdrant
-qdrant-client
+qdrant-client<1.11.0
 fastembed
 sentence-transformers
 rank_bm25
