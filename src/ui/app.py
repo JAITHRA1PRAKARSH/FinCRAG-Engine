@@ -1,7 +1,8 @@
 import streamlit as st
-import requests
+import os
 
-API_URL = "http://127.0.0.1:8000/chat"
+# Import the LangGraph Agent directly (No FastAPI needed)
+from src.agent.crag_agent import app as agent_app
 
 # Streamlit Page Setup
 st.set_page_config(
@@ -45,27 +46,23 @@ if user_query := st.chat_input("e.g., Compare supply chain risks between Apple a
     st.session_state.messages.append({"role": "user", "content": user_query})
     st.chat_message("user").write(user_query)
 
-    # Show loading spinner while calling FastAPI backend
+    # Call the Agent directly
     with st.chat_message("assistant"):
         with st.spinner("Analyzing SEC filings and grading relevance..."):
             try:
-                response = requests.post(
-                    API_URL,
-                    json={"query": user_query},
-                    timeout=120
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    answer = data.get("answer", "No answer returned.")
-                    loops = data.get("loops_taken", 0)
-                    
-                    # Add execution metadata badge
-                    full_response = f"{answer}\n\n---\n*`[Agent Executed in {loops} self-correction loop(s)]`*"
-                    st.write(full_response)
-                    st.session_state.messages.append({"role": "assistant", "content": full_response})
-                else:
-                    err_msg = f"API Error: Server returned status code {response.status_code}"
-                    st.error(err_msg)
-            except Exception as e:
-                st.error(f"Failed to connect to FastAPI backend: {e}")
+                # Bypass FastAPI and invoke LangGraph directly
+                result = agent_app.invoke({
+                    "original_question": user_query, 
+                    "question": user_query, 
+                    "loop_count": 0
+                })
                 
+                answer = result.get("answer", "No answer returned.")
+                loops = result.get("loop_count", 0)
+                
+                # Add execution metadata badge
+                full_response = f"{answer}\n\n---\n*`[Agent Executed in {loops} self-correction loop(s)]`*"
+                st.write(full_response)
+                st.session_state.messages.append({"role": "assistant", "content": full_response})
+            except Exception as e:
+                st.error(f"Failed to process query: {e}")
