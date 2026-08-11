@@ -11,5 +11,3 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Local database storage & raw data (optional if large)
-data/qdrant_db/

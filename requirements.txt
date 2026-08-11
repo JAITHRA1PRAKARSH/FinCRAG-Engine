@@ -1,25 +1,11 @@
-# SEC Data Ingestion
-edgartools==3.0.4
-sec-edgar-downloader==3.0.0
-unstructured[pdf]==0.16.0
-
-# AI Frameworks & Orchestration
-langgraph==0.2.74
-langchain==0.3.18
-langchain-community==0.3.17
-
-# Vector Database & Hybrid Search
-qdrant-client==1.13.2
-rank_bm25==0.2.2
-
-# Fast AI APIs & Embeddings
-groq==0.18.0
-google-generativeai==0.8.4
-fastembed==0.5.1
-
-# Backend & Utilities
-fastapi==0.115.8
-uvicorn==0.34.0
-python-dotenv==1.0.1
-pydantic==2.10.6
-
+streamlit
+langchain
+langchain-groq
+langchain-community
+langchain-text-splitters
+qdrant-client
+fastembed
+sentence-transformers
+rank_bm25
+python-dotenv
+pydantic
