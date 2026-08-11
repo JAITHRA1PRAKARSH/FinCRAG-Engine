@@ -1,0 +1,15 @@
+# Security: NEVER commit API keys or environment files
+.env
+*.env
+
+# Virtual Environment
+venv/
+env/
+
+# Python cache & build files
+__pycache__/
+*.pyc
+*.pyo
+
+# Local database storage & raw data (optional if large)
+data/qdrant_db/
