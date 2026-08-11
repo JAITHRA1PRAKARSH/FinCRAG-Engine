@@ -1,6 +1,6 @@
 import os
 from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
-from langchain_community.vectorstores import Qdrant
+from langchain_qdrant import Qdrant
 from src.ingestion.chunker import load_all_filings, create_sec_chunks
 
 COLLECTION_NAME = "sec_filings"
