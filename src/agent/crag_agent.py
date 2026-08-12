@@ -23,21 +23,28 @@ class AgentState(TypedDict):
     answer: str
     loop_count: int
 
-# 2. LLM Setup
-print("[*] Initializing Llama 3.3 on Groq...")
-llm = ChatGroq(temperature=0, model_name="llama-3.3-70b-versatile")
+# 2. Tiered LLMs Setup
+# Fast 8B model for background grading & rewriting (saves ~70% of 70B token quota)
+fast_llm = ChatGroq(temperature=0, model_name="llama-3.1-8b-instant")
+# High-reasoning 70B model for final cited answer generation
+synthesis_llm = ChatGroq(temperature=0, model_name="llama-3.3-70b-versatile")
 
 class GraderOutput(BaseModel):
     binary_score: str = Field(description="Score 'yes' if context is relevant, 'no' otherwise.")
 
-structured_grader = llm.with_structured_output(GraderOutput)
+structured_grader = fast_llm.with_structured_output(GraderOutput)
 
-# 3. Hybrid Retriever Singleton Setup
-print("[*] Loading filings and building retriever...")
-chunks = load_all_filings()
-retriever = HybridRetriever(chunks)
-del chunks  # Free raw chunk list from RAM immediately
-gc.collect()
+# 3. Retriever Initialization
+_retriever = None
+
+def get_agent_retriever():
+    global _retriever
+    if _retriever is None:
+        chunks = load_all_filings()
+        _retriever = HybridRetriever(chunks)
+        del chunks
+        gc.collect()
+    return _retriever
 
 # 4. Agent Nodes
 def retrieve_node(state: AgentState):
@@ -45,26 +52,23 @@ def retrieve_node(state: AgentState):
     current_q = state.get("question", state["original_question"])
     search_k = 6 if loop_count == 0 else 10
     
-    print(f"\n[Agent] Action: Retrieving (k={search_k}) for query: '{current_q}'")
+    retriever = get_agent_retriever()
     docs = retriever.search(current_q, final_k=search_k)
     doc_texts = [d.page_content for d in docs]
     return {"documents": doc_texts, "question": current_q, "loop_count": loop_count}
 
 def grade_documents_node(state: AgentState):
-    print("[Agent] Action: Grading document relevance...")
     question = state["original_question"]
     documents = state["documents"]
-    
     context = "\n\n".join(documents)
+    
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a strict SEC auditor grading retrieved context relevance for a user question.
-        
-        Evaluation Guidelines:
-        1. If the question asks for NUMERIC data (e.g., net sales, revenues, expenses), score 'yes' ONLY if exact numbers/tables are present in the context.
-        2. If the question asks for QUALITATIVE info (e.g., supply chain risks, tariffs, business drivers, policies), score 'yes' if relevant descriptive text or risk factor explanations are present.
-        
-        Return 'yes' if the context contains enough relevant information to directly answer or address the question. Otherwise, return 'no'."""),
-        ("human", "Question: {question}\n\nRetrieved Context:\n{context}")
+        ("system", """You are a strict financial auditor grading retrieved SEC context.
+        Guidelines:
+        - For NUMERIC queries: score 'yes' if relevant tables/numbers are present.
+        - For QUALITATIVE queries: score 'yes' if descriptive risk factors or disclosures are present.
+        Return 'yes' if the context can directly answer the question; otherwise return 'no'."""),
+        ("human", "Question: {question}\n\nContext:\n{context}")
     ])
     
     try:
@@ -73,53 +77,46 @@ def grade_documents_node(state: AgentState):
     except Exception:
         score = "yes"
         
-    print(f"[Agent] Grade Result: '{score}'")
     return {"is_relevant": score}
 
 def decide_to_generate(state: AgentState):
-    if state.get("is_relevant") == "yes":
+    if state.get("is_relevant") == "yes" or state.get("loop_count", 0) >= 2:
         return "generate"
-    elif state.get("loop_count", 0) >= 2:
-        return "generate"
-    else:
-        return "rewrite"
+    return "rewrite"
 
 def rewrite_query_node(state: AgentState):
-    print("[Agent] Action: Rewriting query for improved retrieval...")
     original_q = state["original_question"]
     
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are an expert SEC search query generator. 
-        Analyze the intent of the question and rewrite it to maximize retrieval performance from an SEC 10-K document:
-        
-        - If the question asks for FINANCIAL NUMBERS (revenue, sales, expenses): target exact financial table terms (e.g., 'Consolidated Statements of Operations table', 'numeric net sales').
-        - If the question asks for RISKS or STRATEGY (supply chain, tariffs, competition): target SEC section terms (e.g., 'Item 1A Risk Factors', 'supply chain disruptions', 'trade restrictions and tariffs').
-        
-        Output ONLY the rewritten search query with no quotes or additional explanation."""),
+        ("system", """You are an SEC search query rewriter. 
+        Analyze the question intent and generate an optimized query targeting SEC 10-K terms (e.g. 'Consolidated Financial Statements', 'Item 1A Risk Factors').
+        Return ONLY the rewritten query text."""),
         ("human", "{question}")
     ])
     
-    new_q = (prompt | llm).invoke({"question": original_q}).content.replace('"', '').strip()
+    try:
+        new_q = (prompt | fast_llm).invoke({"question": original_q}).content.replace('"', '').strip()
+    except Exception:
+        new_q = original_q
+        
     loop_count = state.get("loop_count", 0) + 1
     return {"question": new_q, "loop_count": loop_count}
 
 def generate_node(state: AgentState):
-    print("[Agent] Action: Generating final answer with citations...")
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a strictly accurate SEC Financial Analyst. 
-        Answer the user's question using ONLY the provided context. 
+        ("system", """You are an SEC Financial Analyst. Answer the user question using ONLY the provided context.
         
         CITATION INSTRUCTIONS:
-        - For every key claim, risk factor, or numerical figure, provide an explicit inline citation indicating which company filing and section it came from (e.g., [Apple 10-K: Item 1A - Risk Factors] or [Microsoft 10-K: Consolidated Statements of Operations]).
-        - If the context does not contain the answer, state: 'I cannot find this information in the filings.'
-        - Do not invent citations or hallucinate numbers.
+        - For every key claim, figure, or risk factor, supply an explicit inline citation with the filing name and section (e.g. [Apple 10-K: Item 1A] or [Microsoft 10-K: Consolidated Statements of Operations]).
+        - If the provided context does not contain the answer, explicitly state: 'I cannot find this information in the filings.'
+        - Never hallucinate data.
         
         CONTEXT:
         {context}"""),
         ("human", "{question}")
     ])
     
-    chain = prompt | llm
+    chain = prompt | synthesis_llm
     response = chain.invoke({
         "context": "\n\n---\n\n".join(state["documents"]),
         "question": state["original_question"]
